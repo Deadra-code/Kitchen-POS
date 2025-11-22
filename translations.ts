@@ -64,7 +64,7 @@ export const translations = {
     menuList: "Daftar Menu",
     confirmDelete: "Apakah Anda yakin? Tindakan ini tidak dapat dibatalkan.",
     printReceipt: "Unduh PDF Struk",
-    
+
     // Data Master Translations
     dataMaster: "Data Master",
     dataMasterDesc: "Kelola Kategori dan Pemilik Produk",
@@ -79,6 +79,15 @@ export const translations = {
     dangerZone: "Zona Bahaya",
     dangerZoneDesc: "Hapus data dan reset aplikasi",
     resetData: "Reset Database (Hapus Semua Data)",
-    resetDataConfirm: "PERINGATAN: Ini akan menghapus SEMUA produk, kategori, pemilik, dan riwayat penjualan. Anda akan mulai dari nol. Lanjutkan?"
+    resetDataConfirm: "PERINGATAN: Ini akan menghapus SEMUA produk, kategori, pemilik, dan riwayat penjualan. Anda akan mulai dari nol. Lanjutkan?",
+
+    // Backup & Restore
+    backupRestore: "Backup & Restore",
+    backupRestoreDesc: "Simpan data ke file atau kembalikan data dari file",
+    downloadBackup: "Download Backup Data",
+    restoreBackup: "Restore Data dari File",
+    backupSuccess: "Data berhasil didownload!",
+    restoreSuccess: "Data berhasil dipulihkan! Halaman akan dimuat ulang.",
+    restoreError: "Gagal memulihkan data. Pastikan file benar."
   }
 };

@@ -10,7 +10,7 @@ class POSDatabase extends Dexie {
 
   constructor() {
     super('DebsKitchenDB');
-    
+
     // Define schema versions
     // Version 1: Initial schema with orders
     (this as any).version(1).stores({
@@ -101,4 +101,45 @@ export const resetDatabase = async () => {
     await db.categories.clear();
     await db.owners.clear();
   });
+};
+// --- BACKUP & RESTORE ---
+export const exportDatabase = async () => {
+  const data = {
+    orders: await db.orders.toArray(),
+    products: await db.products.toArray(),
+    categories: await db.categories.toArray(),
+    owners: await db.owners.toArray(),
+    timestamp: new Date().toISOString(),
+    version: 1
+  };
+  return JSON.stringify(data);
+};
+
+export const importDatabase = async (jsonString: string) => {
+  try {
+    const data = JSON.parse(jsonString);
+
+    if (!data.orders || !data.products) {
+      throw new Error("Invalid backup file format");
+    }
+
+    await db.transaction('rw', db.orders, db.products, db.categories, db.owners, async () => {
+      // Clear existing data
+      await db.orders.clear();
+      await db.products.clear();
+      await db.categories.clear();
+      await db.owners.clear();
+
+      // Import new data
+      if (data.orders.length) await db.orders.bulkAdd(data.orders);
+      if (data.products.length) await db.products.bulkAdd(data.products);
+      if (data.categories?.length) await db.categories.bulkAdd(data.categories);
+      if (data.owners?.length) await db.owners.bulkAdd(data.owners);
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Import failed:", error);
+    throw error;
+  }
 };

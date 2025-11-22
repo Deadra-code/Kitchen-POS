@@ -5,7 +5,7 @@ import { Product, CartItem, Order, View, ReportPeriod, CategoryItem, OwnerItem }
 import { ProductCard } from './components/ProductCard';
 import { Cart } from './components/Cart';
 import { ReceiptModal } from './components/ReceiptModal';
-import { addOrderToDb, getOrdersFromDb, getProductsFromDb, addProductToDb, updateProductInDb, deleteProductFromDb, getCategoriesFromDb, addCategoryToDb, deleteCategoryFromDb, getOwnersFromDb, addOwnerToDb, deleteOwnerFromDb, resetDatabase } from './db';
+import { addOrderToDb, getOrdersFromDb, getProductsFromDb, addProductToDb, updateProductInDb, deleteProductFromDb, getCategoriesFromDb, addCategoryToDb, deleteCategoryFromDb, getOwnersFromDb, addOwnerToDb, deleteOwnerFromDb, resetDatabase, exportDatabase, importDatabase } from './db';
 import { translations } from './translations';
 import { formatCurrency } from './utils';
 
@@ -16,14 +16,14 @@ const App: React.FC = () => {
   const [view, setView] = useState<View>('pos');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Data States
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [owners, setOwners] = useState<OwnerItem[]>([]);
-  
+
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null); 
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
@@ -91,7 +91,7 @@ const App: React.FC = () => {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
-        return prev.map(item => 
+        return prev.map(item =>
           item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
@@ -117,7 +117,7 @@ const App: React.FC = () => {
   const handleCheckout = async () => {
     const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     const total = subtotal * (1 + taxRate / 100);
-    
+
     const newOrder: Order = {
       id: Math.floor(Math.random() * 100000).toString(),
       items: [...cart],
@@ -129,8 +129,8 @@ const App: React.FC = () => {
     // Optimistic UI update
     const updatedOrders = [newOrder, ...orders];
     setOrders(updatedOrders);
-    setSelectedOrder(newOrder); 
-    setCart([]); 
+    setSelectedOrder(newOrder);
+    setCart([]);
     setIsMobileCartOpen(false);
 
     // Save to Database
@@ -167,7 +167,7 @@ const App: React.FC = () => {
       setProducts([...products, productData]);
       alert(t('productAdded'));
     }
-    
+
     resetForm();
   };
 
@@ -181,7 +181,7 @@ const App: React.FC = () => {
     setNewProductOwner(product.owner || (owners[0]?.name));
     setNewProductDesc(product.description);
     setNewProductImage(product.image);
-    
+
     // Scroll to form
     const formElement = document.getElementById('product-form');
     if (formElement) formElement.scrollIntoView({ behavior: 'smooth' });
@@ -225,7 +225,7 @@ const App: React.FC = () => {
 
   const handleDeleteCategory = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    
+
     if (!id) return;
 
     if (window.confirm(t('confirmDelete'))) {
@@ -260,14 +260,14 @@ const App: React.FC = () => {
     if (!id) return;
 
     if (window.confirm(t('confirmDelete'))) {
-        try {
-            await deleteOwnerFromDb(id);
-            const updated = await getOwnersFromDb();
-            setOwners(updated);
-        } catch (error) {
-            console.error("Failed to delete owner", error);
-            alert("Gagal menghapus pemilik");
-        }
+      try {
+        await deleteOwnerFromDb(id);
+        const updated = await getOwnersFromDb();
+        setOwners(updated);
+      } catch (error) {
+        console.error("Failed to delete owner", error);
+        alert("Gagal menghapus pemilik");
+      }
     }
   };
 
@@ -277,6 +277,49 @@ const App: React.FC = () => {
       window.location.reload();
     }
   }
+
+  // --- BACKUP & RESTORE ---
+  const handleBackup = async () => {
+    try {
+      const json = await exportDatabase();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-pos-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert(t('backupSuccess'));
+    } catch (error) {
+      console.error("Backup failed", error);
+      alert("Backup failed");
+    }
+  };
+
+  const handleRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (window.confirm("Restore akan menimpa data saat ini. Lanjutkan?")) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const json = event.target?.result as string;
+          await importDatabase(json);
+          alert(t('restoreSuccess'));
+          window.location.reload();
+        } catch (error) {
+          console.error("Restore failed", error);
+          alert(t('restoreError'));
+        }
+      };
+      reader.readAsText(file);
+    }
+    // Reset input
+    e.target.value = '';
+  };
 
   // --- SETTINGS PERSISTENCE ---
   const handleSaveSettings = () => {
@@ -292,13 +335,13 @@ const App: React.FC = () => {
     orders.forEach(order => {
       const d = new Date(order.date);
       let key = '';
-      
+
       if (reportPeriod === 'daily') {
         key = `${d.getHours()}:00`;
       } else if (reportPeriod === 'monthly') {
-         key = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+        key = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
       } else {
-         key = d.toLocaleDateString('id-ID', { month: 'short' });
+        key = d.toLocaleDateString('id-ID', { month: 'short' });
       }
 
       const current = dataMap.get(key) || 0;
@@ -307,7 +350,7 @@ const App: React.FC = () => {
 
     if (dataMap.size === 0) return [];
 
-    return Array.from(dataMap.entries()).map(([name, sales]) => ({ name, sales })).reverse(); 
+    return Array.from(dataMap.entries()).map(([name, sales]) => ({ name, sales })).reverse();
   }, [orders, reportPeriod]);
 
   const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
@@ -321,41 +364,41 @@ const App: React.FC = () => {
         <div className="w-12 h-12 bg-brand-600 rounded-xl flex items-center justify-center shadow-lg shadow-brand-600/20">
           <span className="text-white font-bold text-2xl">D</span>
         </div>
-        
+
         <nav className="flex-1 flex flex-col gap-6 w-full items-center">
-          <NavIcon 
-            icon={<Coffee />} 
-            label={t('pos')} 
-            active={view === 'pos'} 
-            onClick={() => setView('pos')} 
+          <NavIcon
+            icon={<Coffee />}
+            label={t('pos')}
+            active={view === 'pos'}
+            onClick={() => setView('pos')}
           />
-          <NavIcon 
-            icon={<LayoutDashboard />} 
-            label={t('dashboard')} 
-            active={view === 'dashboard'} 
-            onClick={() => setView('dashboard')} 
+          <NavIcon
+            icon={<LayoutDashboard />}
+            label={t('dashboard')}
+            active={view === 'dashboard'}
+            onClick={() => setView('dashboard')}
           />
-          <NavIcon 
-            icon={<History />} 
-            label={t('history')} 
-            active={view === 'history'} 
-            onClick={() => setView('history')} 
+          <NavIcon
+            icon={<History />}
+            label={t('history')}
+            active={view === 'history'}
+            onClick={() => setView('history')}
           />
         </nav>
 
         <div className="mt-auto mb-4">
-          <NavIcon 
-            icon={<Settings />} 
-            label={t('settings')} 
-            active={view === 'settings'} 
-            onClick={() => setView('settings')} 
+          <NavIcon
+            icon={<Settings />}
+            label={t('settings')}
+            active={view === 'settings'}
+            onClick={() => setView('settings')}
           />
         </div>
       </aside>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        
+
         {/* Header Bar */}
         <header className="h-16 md:h-20 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-8 flex-shrink-0 z-20">
           <div className="flex items-center gap-3">
@@ -377,8 +420,8 @@ const App: React.FC = () => {
               <>
                 <div className="relative hidden sm:block">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder={t('searchPlaceholder')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -386,7 +429,7 @@ const App: React.FC = () => {
                   />
                 </div>
 
-                <button 
+                <button
                   className="lg:hidden relative p-2.5 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-700 transition-colors"
                   onClick={() => setIsMobileCartOpen(true)}
                 >
@@ -407,8 +450,8 @@ const App: React.FC = () => {
           <div className="sm:hidden px-4 py-3 bg-white border-b border-gray-200">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder={t('searchPlaceholderMobile')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -420,31 +463,29 @@ const App: React.FC = () => {
 
         {/* View Content */}
         <div className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-8 pb-24 md:pb-8 no-scrollbar">
-          
+
           {/* POS VIEW */}
           {view === 'pos' && (
             <>
               {/* Categories */}
               <div className="flex gap-2 md:gap-3 mb-6 md:mb-8 overflow-x-auto pb-2 no-scrollbar -mx-4 px-4 md:mx-0 md:px-0">
                 <button
-                    onClick={() => setSelectedCategory('All')}
-                    className={`px-4 md:px-6 py-2 rounded-full text-xs md:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
-                      selectedCategory === 'All' 
-                        ? 'bg-gray-900 text-white shadow-lg' 
-                        : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  onClick={() => setSelectedCategory('All')}
+                  className={`px-4 md:px-6 py-2 rounded-full text-xs md:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${selectedCategory === 'All'
+                    ? 'bg-gray-900 text-white shadow-lg'
+                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
                     }`}
-                  >
-                    All
+                >
+                  All
                 </button>
                 {categories.map(cat => (
                   <button
                     key={cat.id}
                     onClick={() => setSelectedCategory(cat.name)}
-                    className={`px-4 md:px-6 py-2 rounded-full text-xs md:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
-                      selectedCategory === cat.name 
-                        ? 'bg-gray-900 text-white shadow-lg' 
-                        : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                    }`}
+                    className={`px-4 md:px-6 py-2 rounded-full text-xs md:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${selectedCategory === cat.name
+                      ? 'bg-gray-900 text-white shadow-lg'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                      }`}
                   >
                     {cat.name}
                   </button>
@@ -465,62 +506,62 @@ const App: React.FC = () => {
             <div className="space-y-6 md:space-y-8">
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-                   <span className="p-2 bg-green-50 text-green-600 rounded-lg mb-2"><DollarSign className="w-5 h-5" /></span>
-                   <span className="text-gray-500 text-xs uppercase">{t('totalRevenue')}</span>
-                   <span className="text-lg md:text-xl font-bold text-gray-900">{formatCurrency(totalRevenue)}</span>
+                  <span className="p-2 bg-green-50 text-green-600 rounded-lg mb-2"><DollarSign className="w-5 h-5" /></span>
+                  <span className="text-gray-500 text-xs uppercase">{t('totalRevenue')}</span>
+                  <span className="text-lg md:text-xl font-bold text-gray-900">{formatCurrency(totalRevenue)}</span>
                 </div>
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-                   <span className="p-2 bg-blue-50 text-blue-600 rounded-lg mb-2"><Receipt className="w-5 h-5" /></span>
-                   <span className="text-gray-500 text-xs uppercase">{t('totalOrders')}</span>
-                   <span className="text-lg md:text-xl font-bold text-gray-900">{orders.length}</span>
+                  <span className="p-2 bg-blue-50 text-blue-600 rounded-lg mb-2"><Receipt className="w-5 h-5" /></span>
+                  <span className="text-gray-500 text-xs uppercase">{t('totalOrders')}</span>
+                  <span className="text-lg md:text-xl font-bold text-gray-900">{orders.length}</span>
                 </div>
                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
-                   <span className="p-2 bg-purple-50 text-purple-600 rounded-lg mb-2"><TrendingUp className="w-5 h-5" /></span>
-                   <span className="text-gray-500 text-xs uppercase">{t('avgOrderValue')}</span>
-                   <span className="text-lg md:text-xl font-bold text-gray-900">{formatCurrency(avgOrderValue)}</span>
+                  <span className="p-2 bg-purple-50 text-purple-600 rounded-lg mb-2"><TrendingUp className="w-5 h-5" /></span>
+                  <span className="text-gray-500 text-xs uppercase">{t('avgOrderValue')}</span>
+                  <span className="text-lg md:text-xl font-bold text-gray-900">{formatCurrency(avgOrderValue)}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8">
                 <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100">
                   <div className="flex justify-between items-center mb-6">
-                     <h3 className="font-bold text-gray-700">{t('hourlySales')}</h3>
-                     <div className="flex bg-gray-100 rounded-lg p-1">
-                        {(['daily', 'monthly', 'yearly'] as ReportPeriod[]).map(period => (
-                           <button
-                              key={period}
-                              onClick={() => setReportPeriod(period)}
-                              className={`px-3 py-1 text-xs rounded-md transition ${reportPeriod === period ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
-                           >
-                              {t(period as any)}
-                           </button>
-                        ))}
-                     </div>
+                    <h3 className="font-bold text-gray-700">{t('hourlySales')}</h3>
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                      {(['daily', 'monthly', 'yearly'] as ReportPeriod[]).map(period => (
+                        <button
+                          key={period}
+                          onClick={() => setReportPeriod(period)}
+                          className={`px-3 py-1 text-xs rounded-md transition ${reportPeriod === period ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                          {t(period as any)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="h-64 w-full text-xs md:text-sm">
                     {chartData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
-                          <YAxis axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} width={80} tickFormatter={(value) => new Intl.NumberFormat('id-ID', { notation: "compact", compactDisplay: "short" }).format(value)} />
-                          <Tooltip 
-                            cursor={{fill: '#f9fafb'}} 
-                            contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#9ca3af' }} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9ca3af' }} width={80} tickFormatter={(value) => new Intl.NumberFormat('id-ID', { notation: "compact", compactDisplay: "short" }).format(value)} />
+                          <Tooltip
+                            cursor={{ fill: '#f9fafb' }}
+                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                             formatter={(value: number) => [formatCurrency(value), 'Penjualan']}
                           />
                           <Bar dataKey="sales" fill="#ea580c" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
-                       <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-                          Tidak ada data untuk periode ini
-                       </div>
+                      <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                        Tidak ada data untuk periode ini
+                      </div>
                     )}
                   </div>
                 </div>
-                
-                 <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100">
+
+                <div className="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-gray-100">
                   <h3 className="font-bold text-gray-700 mb-4">{t('recentActivity')}</h3>
                   <div className="space-y-4">
                     {orders.length === 0 && <p className="text-gray-400 text-sm">Belum ada order terbaru.</p>}
@@ -540,412 +581,444 @@ const App: React.FC = () => {
           )}
 
           {/* HISTORY VIEW (Unchanged) */}
-           {view === 'history' && (
-             <div className="animate-fadeIn">
-                {orders.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                    <div className="p-6 bg-white rounded-full mb-4 shadow-sm">
-                      <History className="w-12 h-12 text-gray-300" />
-                    </div>
-                    <p className="text-lg font-medium">{t('noOrders')}</p>
+          {view === 'history' && (
+            <div className="animate-fadeIn">
+              {orders.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                  <div className="p-6 bg-white rounded-full mb-4 shadow-sm">
+                    <History className="w-12 h-12 text-gray-300" />
                   </div>
-                ) : (
-                  <div className="md:hidden space-y-4">
-                    {orders.map(o => (
-                      <div key={o.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-3">
-                        <div className="flex justify-between items-start border-b border-gray-50 pb-3">
-                          <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-gray-800">Order #{o.id}</span>
-                                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-bold uppercase">{t('paid')}</span>
-                              </div>
-                              <div className="flex items-center gap-1 text-gray-500 text-xs mt-1">
-                                <Calendar className="w-3 h-3" />
-                                <span>{formatDate(o.date)} • {new Date(o.date).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</span>
-                              </div>
+                  <p className="text-lg font-medium">{t('noOrders')}</p>
+                </div>
+              ) : (
+                <div className="md:hidden space-y-4">
+                  {orders.map(o => (
+                    <div key={o.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-3">
+                      <div className="flex justify-between items-start border-b border-gray-50 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-800">Order #{o.id}</span>
+                            <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px] font-bold uppercase">{t('paid')}</span>
                           </div>
-                          <div className="text-right">
-                              <span className="block font-bold text-lg text-brand-600">{formatCurrency(o.total)}</span>
+                          <div className="flex items-center gap-1 text-gray-500 text-xs mt-1">
+                            <Calendar className="w-3 h-3" />
+                            <span>{formatDate(o.date)} • {new Date(o.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                         </div>
-                        <div className="text-sm text-gray-600">
-                            <p className="line-clamp-2">
-                              <span className="font-medium text-gray-900">{o.items.length} Items: </span> 
-                              {o.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
-                            </p>
+                        <div className="text-right">
+                          <span className="block font-bold text-lg text-brand-600">{formatCurrency(o.total)}</span>
                         </div>
-                        <button 
-                          onClick={() => setSelectedOrder(o)}
-                          className="w-full py-2 mt-1 text-sm font-medium text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 transition flex items-center justify-center gap-1"
-                        >
-                          {t('viewReceipt')} <ChevronRight className="w-4 h-4" />
-                        </button>
                       </div>
-                    ))}
-                    <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-                      <table className="w-full text-left min-w-[600px]">
-                        <thead className="bg-gray-50 border-b border-gray-200">
+                      <div className="text-sm text-gray-600">
+                        <p className="line-clamp-2">
+                          <span className="font-medium text-gray-900">{o.items.length} Items: </span>
+                          {o.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setSelectedOrder(o)}
+                        className="w-full py-2 mt-1 text-sm font-medium text-gray-500 bg-gray-50 rounded-lg hover:bg-gray-100 transition flex items-center justify-center gap-1"
+                      >
+                        {t('viewReceipt')} <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                    <table className="w-full text-left min-w-[600px]">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('orderId')}</th>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('date')}</th>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('items')}</th>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('total')}</th>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('status')}</th>
+                          <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orders.map(o => (
+                          <tr key={o.id} className="border-b border-gray-100 hover:bg-gray-50 transition">
+                            <td className="p-4 font-mono text-sm">#{o.id}</td>
+                            <td className="p-4 text-sm text-gray-600">{new Date(o.date).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</td>
+                            <td className="p-4 text-sm text-gray-600 max-w-xs truncate">{o.items.map(i => i.name).join(', ')}</td>
+                            <td className="p-4 font-bold text-brand-600">{formatCurrency(o.total)}</td>
+                            <td className="p-4"><span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">{t('paid')}</span></td>
+                            <td className="p-4 text-right">
+                              <button onClick={() => setSelectedOrder(o)} className="text-gray-400 hover:text-brand-600 transition"><ChevronRight className="w-5 h-5" /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SETTINGS VIEW */}
+          {view === 'settings' && (
+            <div className="max-w-3xl mx-auto animate-fadeIn pb-10">
+
+              {/* Data Master (Categories & Owners) */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-gray-100 flex items-center gap-3">
+                  <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">{t('dataMaster')}</h2>
+                    <p className="text-sm text-gray-500">{t('dataMasterDesc')}</p>
+                  </div>
+                </div>
+                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Category Management */}
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                      {t('categoryList')}
+                    </h3>
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder={t('inputPlaceholder')}
+                        className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCategory}
+                        className="px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
+                      >
+                        {t('add')}
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
+                      {categories.map(cat => (
+                        <div key={cat.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100 text-sm hover:bg-white transition-colors">
+                          <span className="font-medium text-gray-700 pl-1">{cat.name}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteCategory(e, cat.id)}
+                            className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
+                            title={t('delete')}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Owner Management */}
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                      {t('ownerList')}
+                    </h3>
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={newOwnerName}
+                        onChange={(e) => setNewOwnerName(e.target.value)}
+                        placeholder={t('inputPlaceholder')}
+                        className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddOwner}
+                        className="px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
+                      >
+                        {t('add')}
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
+                      {owners.map(owner => (
+                        <div key={owner.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100 text-sm hover:bg-white transition-colors">
+                          <span className="font-medium text-gray-700 pl-1">{owner.name}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteOwner(e, owner.id)}
+                            className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
+                            title={t('delete')}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Menu Management */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-gray-100 flex items-center gap-3">
+                  <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
+                    <Utensils className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">{t('menuManagement')}</h2>
+                    <p className="text-sm text-gray-500">{t('menuManagementDesc')}</p>
+                  </div>
+                </div>
+                <div className="p-6 space-y-6">
+                  {/* Form */}
+                  <div id="product-form" className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-semibold text-gray-800">{editingProductId ? t('edit') : t('addToCart')} Menu</h3>
+                      {editingProductId && (
+                        <button type="button" onClick={resetForm} className="text-xs text-red-600 hover:underline">{t('cancel')}</button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('productName')}</label>
+                        <input
+                          type="text"
+                          value={newProductName}
+                          onChange={(e) => setNewProductName(e.target.value)}
+                          className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('price')}</label>
+                        <input
+                          type="number"
+                          value={newProductPrice}
+                          onChange={(e) => setNewProductPrice(e.target.value)}
+                          className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('category')}</label>
+                        <select
+                          value={newProductCategory}
+                          onChange={(e) => setNewProductCategory(e.target.value)}
+                          className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                        >
+                          {categories.map(c => (
+                            <option key={c.id} value={c.name}>{c.name}</option>
+                          ))}
+                        </select>
+                        ```
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('owner')}</label>
+                        <select
+                          value={newProductOwner}
+                          onChange={(e) => setNewProductOwner(e.target.value)}
+                          className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                        >
+                          {owners.map(o => (
+                            <option key={o.id} value={o.name}>{o.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('imageUrl')}</label>
+                      <input
+                        type="text"
+                        value={newProductImage}
+                        placeholder="Optional (https://...)"
+                        onChange={(e) => setNewProductImage(e.target.value)}
+                        className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                      />
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('description')}</label>
+                      <textarea
+                        value={newProductDesc}
+                        onChange={(e) => setNewProductDesc(e.target.value)}
+                        className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition h-20"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveProduct}
+                      className="w-full py-2.5 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition flex items-center justify-center gap-2 shadow-sm"
+                    >
+                      {editingProductId ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      {t('addProduct')}
+                    </button>
+                  </div>
+
+                  {/* Product List */}
+                  <div>
+                    <h3 className="font-semibold text-gray-800 mb-3">{t('menuList')}</h3>
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-left">
+                        <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
                           <tr>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('orderId')}</th>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('date')}</th>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('items')}</th>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('total')}</th>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider">{t('status')}</th>
-                            <th className="p-4 font-medium text-gray-600 text-xs md:text-sm uppercase tracking-wider"></th>
+                            <th className="px-4 py-3">{t('items')}</th>
+                            <th className="px-4 py-3">{t('owner')}</th>
+                            <th className="px-4 py-3">{t('price')}</th>
+                            <th className="px-4 py-3 text-right">Action</th>
                           </tr>
                         </thead>
-                        <tbody>
-                            {orders.map(o => (
-                              <tr key={o.id} className="border-b border-gray-100 hover:bg-gray-50 transition">
-                                <td className="p-4 font-mono text-sm">#{o.id}</td>
-                                <td className="p-4 text-sm text-gray-600">{new Date(o.date).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})}</td>
-                                <td className="p-4 text-sm text-gray-600 max-w-xs truncate">{o.items.map(i => i.name).join(', ')}</td>
-                                <td className="p-4 font-bold text-brand-600">{formatCurrency(o.total)}</td>
-                                <td className="p-4"><span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">{t('paid')}</span></td>
-                                <td className="p-4 text-right">
-                                    <button onClick={() => setSelectedOrder(o)} className="text-gray-400 hover:text-brand-600 transition"><ChevronRight className="w-5 h-5" /></button>
-                                </td>
-                              </tr>
-                            ))}
+                        <tbody className="divide-y divide-gray-100">
+                          {products.map(product => (
+                            <tr key={product.id} className="hover:bg-gray-50 bg-white">
+                              <td className="px-4 py-3">
+                                <div className="font-medium text-gray-900">{product.name}</div>
+                                <div className="text-xs text-gray-500">{product.category}</div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">{product.owner}</td>
+                              <td className="px-4 py-3 text-sm">{formatCurrency(product.price)}</td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleEditProduct(e, product)}
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                  >
+                                    <Edit className="w-4 h-4 pointer-events-none" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteProduct(e, product.id)}
+                                    className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                )}
-             </div>
-           )}
+                </div>
+              </div>
 
-          {/* SETTINGS VIEW */}
-          {view === 'settings' && (
-             <div className="max-w-3xl mx-auto animate-fadeIn pb-10">
-                
-                {/* Data Master (Categories & Owners) */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-                  <div className="p-6 border-b border-gray-100 flex items-center gap-3">
-                     <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
-                        <Database className="w-5 h-5" />
-                     </div>
-                     <div>
-                        <h2 className="text-lg font-bold text-gray-900">{t('dataMaster')}</h2>
-                        <p className="text-sm text-gray-500">{t('dataMasterDesc')}</p>
-                     </div>
+              {/* Store Configuration */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-gray-100 flex items-center gap-3">
+                  <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
+                    <Store className="w-5 h-5" />
                   </div>
-                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-                      {/* Category Management */}
-                      <div>
-                          <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                            {t('categoryList')}
-                          </h3>
-                          <div className="flex gap-2 mb-3">
-                            <input 
-                                type="text" 
-                                value={newCategoryName}
-                                onChange={(e) => setNewCategoryName(e.target.value)}
-                                placeholder={t('inputPlaceholder')}
-                                className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
-                            />
-                            <button 
-                              type="button"
-                              onClick={handleAddCategory} 
-                              className="px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
-                            >
-                                {t('add')}
-                            </button>
-                          </div>
-                          <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                             {categories.map(cat => (
-                                 <div key={cat.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100 text-sm hover:bg-white transition-colors">
-                                     <span className="font-medium text-gray-700 pl-1">{cat.name}</span>
-                                     <button 
-                                        type="button"
-                                        onClick={(e) => handleDeleteCategory(e, cat.id)} 
-                                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
-                                        title={t('delete')}
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                 </div>
-                             ))}
-                          </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">{t('storeConfig')}</h2>
+                    <p className="text-sm text-gray-500">{t('storeConfigDesc')}</p>
+                  </div>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">{t('storeName')}</label>
+                      <input
+                        type="text"
+                        value={storeName}
+                        onChange={(e) => setStoreName(e.target.value)}
+                        className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">{t('salesTax')}</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={taxRate}
+                          onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
+                          className="w-full pl-4 pr-8 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                        />
+                        <Percent className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                       </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveSettings}
+                    className="px-6 py-2.5 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Save className="w-4 h-4" />
+                    {t('saveChanges')}
+                  </button>
+                </div>
+              </div>
 
-                      {/* Owner Management */}
-                      <div>
-                          <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                             {t('ownerList')}
-                          </h3>
-                          <div className="flex gap-2 mb-3">
-                            <input 
-                                type="text" 
-                                value={newOwnerName}
-                                onChange={(e) => setNewOwnerName(e.target.value)}
-                                placeholder={t('inputPlaceholder')}
-                                className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
-                            />
-                            <button 
-                              type="button"
-                              onClick={handleAddOwner} 
-                              className="px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
-                            >
-                                {t('add')}
-                            </button>
-                          </div>
-                          <div className="space-y-2 max-h-48 overflow-y-auto pr-2 no-scrollbar">
-                             {owners.map(owner => (
-                                 <div key={owner.id} className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-100 text-sm hover:bg-white transition-colors">
-                                     <span className="font-medium text-gray-700 pl-1">{owner.name}</span>
-                                     <button 
-                                        type="button"
-                                        onClick={(e) => handleDeleteOwner(e, owner.id)} 
-                                        className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
-                                        title={t('delete')}
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                 </div>
-                             ))}
-                          </div>
-                      </div>
+              {/* Backup & Restore */}
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+                <div className="p-6 border-b border-gray-100 flex items-center gap-3">
+                  <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">{t('backupRestore')}</h2>
+                    <p className="text-sm text-gray-500">{t('backupRestoreDesc')}</p>
                   </div>
                 </div>
+                <div className="p-6 flex flex-col md:flex-row gap-4">
+                  <button
+                    onClick={handleBackup}
+                    className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Save className="w-4 h-4" />
+                    {t('downloadBackup')}
+                  </button>
+                  <label className="px-6 py-3 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition flex items-center justify-center gap-2 shadow-sm cursor-pointer">
+                    <Database className="w-4 h-4" />
+                    {t('restoreBackup')}
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleRestore}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
 
-                {/* Menu Management */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-                  <div className="p-6 border-b border-gray-100 flex items-center gap-3">
-                     <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
-                        <Utensils className="w-5 h-5" />
-                     </div>
-                     <div>
-                        <h2 className="text-lg font-bold text-gray-900">{t('menuManagement')}</h2>
-                        <p className="text-sm text-gray-500">{t('menuManagementDesc')}</p>
-                     </div>
+              {/* DANGER ZONE - RESET DATA */}
+              <div className="bg-red-50 rounded-2xl shadow-sm border border-red-100 overflow-hidden mb-6">
+                <div className="p-6 border-b border-red-100 flex items-center gap-3">
+                  <div className="p-2 bg-red-100 rounded-lg text-red-600">
+                    <AlertTriangle className="w-5 h-5" />
                   </div>
-                  <div className="p-6 space-y-6">
-                     {/* Form */}
-                     <div id="product-form" className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                        <div className="flex justify-between items-center mb-4">
-                           <h3 className="font-semibold text-gray-800">{editingProductId ? t('edit') : t('addToCart')} Menu</h3>
-                           {editingProductId && (
-                              <button type="button" onClick={resetForm} className="text-xs text-red-600 hover:underline">{t('cancel')}</button>
-                           )}
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                           <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">{t('productName')}</label>
-                              <input 
-                                type="text" 
-                                value={newProductName}
-                                onChange={(e) => setNewProductName(e.target.value)}
-                                className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                              />
-                           </div>
-                           <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">{t('price')}</label>
-                              <input 
-                                type="number" 
-                                value={newProductPrice}
-                                onChange={(e) => setNewProductPrice(e.target.value)}
-                                className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                              />
-                           </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                           <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">{t('category')}</label>
-                              <select 
-                                value={newProductCategory}
-                                onChange={(e) => setNewProductCategory(e.target.value)}
-                                className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                              >
-                                {categories.map(c => (
-                                  <option key={c.id} value={c.name}>{c.name}</option>
-                                ))}
-                              </select>
-                           </div>
-                           <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">{t('owner')}</label>
-                              <select 
-                                value={newProductOwner}
-                                onChange={(e) => setNewProductOwner(e.target.value)}
-                                className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                              >
-                                {owners.map(o => (
-                                  <option key={o.id} value={o.name}>{o.name}</option>
-                                ))}
-                              </select>
-                           </div>
-                        </div>
-                        
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">{t('imageUrl')}</label>
-                            <input 
-                            type="text" 
-                            value={newProductImage}
-                            placeholder="Optional (https://...)"
-                            onChange={(e) => setNewProductImage(e.target.value)}
-                            className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                            />
-                        </div>
-
-                        <div className="mb-4">
-                           <label className="block text-sm font-medium text-gray-700 mb-1">{t('description')}</label>
-                           <textarea 
-                             value={newProductDesc}
-                             onChange={(e) => setNewProductDesc(e.target.value)}
-                             className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition h-20"
-                           />
-                        </div>
-
-                        <button 
-                           type="button"
-                           onClick={handleSaveProduct}
-                           className="w-full py-2.5 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition flex items-center justify-center gap-2 shadow-sm"
-                        >
-                           {editingProductId ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                           {t('addProduct')}
-                        </button>
-                     </div>
-
-                     {/* Product List */}
-                     <div>
-                        <h3 className="font-semibold text-gray-800 mb-3">{t('menuList')}</h3>
-                        <div className="border border-gray-200 rounded-xl overflow-hidden">
-                           <table className="w-full text-left">
-                              <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
-                                 <tr>
-                                    <th className="px-4 py-3">{t('items')}</th>
-                                    <th className="px-4 py-3">{t('owner')}</th>
-                                    <th className="px-4 py-3">{t('price')}</th>
-                                    <th className="px-4 py-3 text-right">Action</th>
-                                 </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100">
-                                 {products.map(product => (
-                                    <tr key={product.id} className="hover:bg-gray-50 bg-white">
-                                       <td className="px-4 py-3">
-                                          <div className="font-medium text-gray-900">{product.name}</div>
-                                          <div className="text-xs text-gray-500">{product.category}</div>
-                                       </td>
-                                       <td className="px-4 py-3 text-sm text-gray-600">{product.owner}</td>
-                                       <td className="px-4 py-3 text-sm">{formatCurrency(product.price)}</td>
-                                       <td className="px-4 py-3 text-right">
-                                          <div className="flex items-center justify-end gap-2">
-                                             <button 
-                                                type="button"
-                                                onClick={(e) => handleEditProduct(e, product)}
-                                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                                             >
-                                                <Edit className="w-4 h-4 pointer-events-none" />
-                                             </button>
-                                             <button 
-                                                type="button"
-                                                onClick={(e) => handleDeleteProduct(e, product.id)}
-                                                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 active:bg-red-200 transition-colors border border-red-100 flex-shrink-0 cursor-pointer"
-                                             >
-                                                <Trash2 className="w-4 h-4" />
-                                             </button>
-                                          </div>
-                                       </td>
-                                    </tr>
-                                 ))}
-                              </tbody>
-                           </table>
-                        </div>
-                     </div>
-
+                  <div>
+                    <h2 className="text-lg font-bold text-red-900">{t('dangerZone')}</h2>
+                    <p className="text-sm text-red-600">{t('dangerZoneDesc')}</p>
                   </div>
                 </div>
-
-                {/* Store Configuration */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-                  <div className="p-6 border-b border-gray-100 flex items-center gap-3">
-                     <div className="p-2 bg-brand-50 rounded-lg text-brand-600">
-                        <Store className="w-5 h-5" />
-                     </div>
-                     <div>
-                        <h2 className="text-lg font-bold text-gray-900">{t('storeConfig')}</h2>
-                        <p className="text-sm text-gray-500">{t('storeConfigDesc')}</p>
-                     </div>
-                  </div>
-                  <div className="p-6 space-y-6">
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">{t('storeName')}</label>
-                            <input 
-                            type="text" 
-                            value={storeName}
-                            onChange={(e) => setStoreName(e.target.value)}
-                            className="w-full px-4 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">{t('salesTax')}</label>
-                            <div className="relative">
-                                <input 
-                                type="number" 
-                                value={taxRate}
-                                onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
-                                className="w-full pl-4 pr-8 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                                />
-                                <Percent className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            </div>
-                        </div>
-                     </div>
-                     <button 
-                        type="button"
-                        onClick={handleSaveSettings}
-                        className="px-6 py-2.5 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition flex items-center justify-center gap-2 shadow-sm"
-                     >
-                        <Save className="w-4 h-4" />
-                        {t('saveChanges')}
-                     </button>
-                  </div>
+                <div className="p-6">
+                  <button
+                    type="button"
+                    onClick={handleResetData}
+                    className="w-full px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {t('resetData')}
+                  </button>
                 </div>
+              </div>
 
-                {/* DANGER ZONE - RESET DATA */}
-                <div className="bg-red-50 rounded-2xl shadow-sm border border-red-100 overflow-hidden mb-6">
-                  <div className="p-6 border-b border-red-100 flex items-center gap-3">
-                     <div className="p-2 bg-red-100 rounded-lg text-red-600">
-                        <AlertTriangle className="w-5 h-5" />
-                     </div>
-                     <div>
-                        <h2 className="text-lg font-bold text-red-900">{t('dangerZone')}</h2>
-                        <p className="text-sm text-red-600">{t('dangerZoneDesc')}</p>
-                     </div>
-                  </div>
-                  <div className="p-6">
-                     <button 
-                        type="button"
-                        onClick={handleResetData}
-                        className="w-full px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition flex items-center justify-center gap-2 shadow-sm"
-                     >
-                        <Trash2 className="w-4 h-4" />
-                        {t('resetData')}
-                     </button>
-                  </div>
-                </div>
-
-             </div>
+            </div>
           )}
 
         </div>
 
         {/* Mobile Bottom Navigation */}
         <nav className="md:hidden absolute bottom-0 w-full bg-white border-t border-gray-200 h-20 pb-4 flex justify-around items-center px-2 z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-           <NavIconMobile icon={<Coffee />} label={t('pos')} active={view === 'pos'} onClick={() => setView('pos')} />
-           <NavIconMobile icon={<LayoutDashboard />} label={t('dashboard')} active={view === 'dashboard'} onClick={() => setView('dashboard')} />
-           <NavIconMobile icon={<History />} label={t('history')} active={view === 'history'} onClick={() => setView('history')} />
-           <NavIconMobile icon={<Settings />} label={t('settings')} active={view === 'settings'} onClick={() => setView('settings')} />
+          <NavIconMobile icon={<Coffee />} label={t('pos')} active={view === 'pos'} onClick={() => setView('pos')} />
+          <NavIconMobile icon={<LayoutDashboard />} label={t('dashboard')} active={view === 'dashboard'} onClick={() => setView('dashboard')} />
+          <NavIconMobile icon={<History />} label={t('history')} active={view === 'history'} onClick={() => setView('history')} />
+          <NavIconMobile icon={<Settings />} label={t('settings')} active={view === 'settings'} onClick={() => setView('settings')} />
         </nav>
       </main>
 
       {/* Desktop Right Panel (Cart) */}
       {view === 'pos' && (
         <div className="hidden lg:block w-96 h-full border-l border-gray-200 bg-white shadow-xl z-20 relative">
-          <Cart 
-            cartItems={cart} 
-            onUpdateQuantity={updateQuantity} 
+          <Cart
+            cartItems={cart}
+            onUpdateQuantity={updateQuantity}
             onRemove={removeFromCart}
             onCheckout={handleCheckout}
             taxRate={taxRate / 100}
@@ -956,20 +1029,20 @@ const App: React.FC = () => {
       {/* Mobile/Tablet Cart Drawer */}
       {view === 'pos' && (
         <>
-           <div 
-             className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-300 lg:hidden ${isMobileCartOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-             onClick={() => setIsMobileCartOpen(false)}
-           />
-           <div className={`fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-50 shadow-2xl transform transition-transform duration-300 lg:hidden ${isMobileCartOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-              <Cart 
-                cartItems={cart} 
-                onUpdateQuantity={updateQuantity} 
-                onRemove={removeFromCart}
-                onCheckout={handleCheckout}
-                onClose={() => setIsMobileCartOpen(false)}
-                taxRate={taxRate / 100}
-              />
-           </div>
+          <div
+            className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-300 lg:hidden ${isMobileCartOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            onClick={() => setIsMobileCartOpen(false)}
+          />
+          <div className={`fixed top-0 right-0 h-full w-full sm:w-[400px] bg-white z-50 shadow-2xl transform transition-transform duration-300 lg:hidden ${isMobileCartOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+            <Cart
+              cartItems={cart}
+              onUpdateQuantity={updateQuantity}
+              onRemove={removeFromCart}
+              onCheckout={handleCheckout}
+              onClose={() => setIsMobileCartOpen(false)}
+              taxRate={taxRate / 100}
+            />
+          </div>
         </>
       )}
 
@@ -979,8 +1052,8 @@ const App: React.FC = () => {
 };
 
 // Helper Components
-const NavIcon: React.FC<{icon: React.ReactNode, label: string, active: boolean, onClick: () => void}> = ({icon, label, active, onClick}) => (
-  <button 
+const NavIcon: React.FC<{ icon: React.ReactNode, label: string, active: boolean, onClick: () => void }> = ({ icon, label, active, onClick }) => (
+  <button
     onClick={onClick}
     className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-200 group ${active ? 'bg-brand-600 text-white shadow-lg shadow-brand-500/30' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
   >
@@ -989,13 +1062,13 @@ const NavIcon: React.FC<{icon: React.ReactNode, label: string, active: boolean, 
   </button>
 );
 
-const NavIconMobile: React.FC<{icon: React.ReactNode, label: string, active: boolean, onClick: () => void}> = ({icon, label, active, onClick}) => (
-  <button 
+const NavIconMobile: React.FC<{ icon: React.ReactNode, label: string, active: boolean, onClick: () => void }> = ({ icon, label, active, onClick }) => (
+  <button
     onClick={onClick}
     className={`flex-1 flex flex-col items-center justify-center py-2 gap-1 transition-colors ${active ? 'text-brand-600' : 'text-gray-400'}`}
   >
     <div className={`p-1.5 rounded-xl ${active ? 'bg-brand-50' : 'bg-transparent'}`}>
-       {React.cloneElement(icon as React.ReactElement<any>, { size: 24, strokeWidth: active ? 2.5 : 2 })}
+      {React.cloneElement(icon as React.ReactElement<any>, { size: 24, strokeWidth: active ? 2.5 : 2 })}
     </div>
     <span className="text-[10px] font-medium">{label}</span>
   </button>
